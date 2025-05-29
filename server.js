@@ -1,74 +1,84 @@
-import express from "express";
-import fetch from "node-fetch";
-import nodemailer from "nodemailer";
-import dotenv from "dotenv";
+function processEmails() {
+  var threads = GmailApp.search('label:ChatGPT is:unread');
+  var webhookUrl = 'https://email-webhook-fibs.onrender.com/webhook';
 
-dotenv.config();
-const app = express();
-app.use(express.json());
+  for (var i = 0; i < threads.length; i++) {
+    var messages = threads[i].getMessages();
+    for (var j = 0; j < messages.length; j++) {
+      var msg = messages[j];
+      if (!msg.isUnread()) continue;
 
-app.post("/webhook", async (req, res) => {
-  const { from, subject, body } = req.body;
+      var from = msg.getFrom();
+      var subject = msg.getSubject();
+      var body = msg.getPlainBody();
+      var attachments = msg.getAttachments();
+      var extractedText = '';
 
-  console.log("Received Email:", { from, subject, body });
+      for (var k = 0; k < attachments.length; k++) {
+        var file = attachments[k];
+        var blob = file.copyBlob();
+        var mimeType = blob.getContentType();
 
-  try {
-    // Clean text input
-    const cleanText = body.replace(/\\r\\n/g, "\n").trim();
+        Logger.log("Attachment detected: " + file.getName() + " | MIME: " + mimeType);
 
-    // Call OpenAI API
-    const gptRes = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: "gpt-3.5-turbo",
-        messages: [
-          { role: "system", content: "You are a helpful assistant." },
-          { role: "user", content: cleanText }
-        ]
-      })
-    });
+        // ✅ Convert PDF or Word docs to Google Docs using Drive API v3
+        if (
+          mimeType === MimeType.PDF ||
+          mimeType === "application/pdf" ||
+          mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || // .docx
+          mimeType === "application/msword" // .doc
+        ) {
+          try {
+            var blobText = blob.getDataAsString();
 
-    const result = await gptRes.json();
+            var fileMetadata = {
+              name: file.getName(),
+              mimeType: 'application/vnd.google-apps.document'
+            };
 
-    // Log full API response for debugging
-    console.log("Raw GPT API Response:", JSON.stringify(result, null, 2));
+            var media = {
+              mimeType: mimeType,
+              body: blobText
+            };
 
-    // Extract GPT reply
-    let reply = "No GPT response";
-    if (result.choices && result.choices.length > 0) {
-      reply = result.choices[0].message.content;
-    }
+            var docFile = Drive.Files.create(fileMetadata, media);
+            var doc = DocumentApp.openById(docFile.id);
+            doc.saveAndClose();
+            extractedText += '\n\n--- File: ' + file.getName() + ' ---\n' + doc.getBody().getText();
 
-    console.log("GPT Response:", reply);
+          } catch (e) {
+            Logger.log("❌ Error converting file: " + file.getName() + " - " + e.message);
+          }
+        }
 
-    // Send GPT response via email
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: process.env.GMAIL_USER,
-        pass: process.env.GMAIL_PASS
+        // ✅ Handle plain text files (optional)
+        else if (mimeType === MimeType.PLAIN_TEXT) {
+          extractedText += '\n\n--- File: ' + file.getName() + ' ---\n' + blob.getDataAsString();
+        }
       }
-    });
 
-    await transporter.sendMail({
-      from: `"GPT Bot" <${process.env.GMAIL_USER}>`,
-      to: process.env.SEND_TO_EMAIL,
-      subject: `GPT Response to: ${subject}`,
-      text: reply
-    });
+      // ✅ Use extracted text or fallback to email body
+      var finalText = extractedText.trim() ? extractedText : body;
 
-    console.log("Email sent to:", process.env.SEND_TO_EMAIL);
-  } catch (error) {
-    console.error("Error:", error.message);
+      var payload = {
+        from: from,
+        subject: subject,
+        body: finalText
+      };
+
+      var options = {
+        method: 'post',
+        contentType: 'application/json',
+        payload: JSON.stringify(payload)
+      };
+
+      try {
+        UrlFetchApp.fetch(webhookUrl, options);
+      } catch (e) {
+        Logger.log('❌ Webhook Error: ' + e.message);
+      }
+
+      msg.markRead(); // ✅ Mark email as processed
+    }
   }
-
-  res.status(200).send("Processed");
-});
-
-// Render-compatible port binding
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Listening on port ${PORT}`));
+}
