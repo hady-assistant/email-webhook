@@ -9,10 +9,11 @@ app.use(express.json());
 
 app.post("/webhook", async (req, res) => {
   const { from, subject, body } = req.body;
+
   console.log("Received Email:", { from, subject, body });
 
   try {
-    // Clean up body formatting
+    // Clean text input
     const cleanText = body.replace(/\\r\\n/g, "\n").trim();
 
     // Call OpenAI API
@@ -33,9 +34,10 @@ app.post("/webhook", async (req, res) => {
 
     const result = await gptRes.json();
 
-    // Log entire response for debugging
+    // Log full API response for debugging
     console.log("Raw GPT API Response:", JSON.stringify(result, null, 2));
 
+    // Extract GPT reply
     let reply = "No GPT response";
     if (result.choices && result.choices.length > 0) {
       reply = result.choices[0].message.content;
@@ -43,7 +45,7 @@ app.post("/webhook", async (req, res) => {
 
     console.log("GPT Response:", reply);
 
-    // Send email back with the GPT reply
+    // Send GPT response via email
     const transporter = nodemailer.createTransport({
       service: "gmail",
       auth: {
@@ -67,11 +69,6 @@ app.post("/webhook", async (req, res) => {
   res.status(200).send("Processed");
 });
 
-app.get("/", (req, res) => {
-  res.send("Email Webhook with GPT + Email Response is live");
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Listening on port ${PORT}`));
+// Render-compatible port binding
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Listening on port ${PORT}`));
