@@ -13,7 +13,7 @@ app.post("/webhook", async (req, res) => {
   console.log("📨 Received Email:", { from, subject, body });
 
   try {
-    // Clean up line breaks
+    // Clean text input
     const cleanText = body.replace(/\\r\\n/g, "\n").trim();
 
     // Call OpenAI API
@@ -26,7 +26,11 @@ app.post("/webhook", async (req, res) => {
       body: JSON.stringify({
         model: "gpt-3.5-turbo",
         messages: [
-          { role: "system", content: "You are a helpful assistant." },
+          {
+            role: "system",
+            content:
+              "You are an AI assistant. The following message contains document content extracted from one or more email attachments. Analyze this content thoroughly. For each document, outline the pros, cons, and suggest professional improvements."
+          },
           { role: "user", content: cleanText }
         ]
       })
@@ -34,8 +38,8 @@ app.post("/webhook", async (req, res) => {
 
     const result = await gptRes.json();
 
-    // Log full API response
-    console.log("🧠 Raw GPT API Response:", JSON.stringify(result, null, 2));
+    // Log full API response for debugging
+    console.log("🧠 GPT API Response:", JSON.stringify(result, null, 2));
 
     // Extract GPT reply
     let reply = "No GPT response";
@@ -45,7 +49,7 @@ app.post("/webhook", async (req, res) => {
 
     console.log("✅ GPT Response:", reply);
 
-    // Send response via email
+    // Email setup
     const transporter = nodemailer.createTransport({
       service: "gmail",
       auth: {
@@ -54,10 +58,11 @@ app.post("/webhook", async (req, res) => {
       }
     });
 
-    // Extract only the email from "Hady Atallah <hadyatallah@gmail.com>"
-    const emailMatch = from.match(/<(.*)>/);
-    const recipient = emailMatch ? emailMatch[1] : process.env.SEND_TO_EMAIL;
+    // Extract clean email address from "Name <email@domain.com>"
+    const emailMatch = from.match(/<(.+)>/);
+    const recipient = emailMatch ? emailMatch[1] : from;
 
+    // Send GPT response back to sender
     await transporter.sendMail({
       from: `"GPT Bot" <${process.env.GMAIL_USER}>`,
       to: recipient,
@@ -73,7 +78,7 @@ app.post("/webhook", async (req, res) => {
   res.status(200).send("Processed");
 });
 
-// ✅ Port binding for Render detection
+// ✅ Required for Render to detect your service
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Server is live on port ${PORT}`);
